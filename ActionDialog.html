@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 16px;
+        color: #202124;
+        background: #f8f9fa;
+      }
+
+      .card {
+        border: 1px solid #d0d0d0;
+        border-radius: 16px;
+        padding: 18px;
+        background: #ffffff;
+        box-shadow: 0 10px 24px rgba(32, 33, 36, 0.12);
+      }
+
+      .title {
+        font-size: 20px;
+        font-weight: 700;
+        margin-bottom: 12px;
+      }
+
+      .meta,
+      .summary {
+        border: 1px solid #e0e0e0;
+        border-radius: 12px;
+        padding: 12px;
+        background: #fafafa;
+      }
+
+      .meta {
+        font-size: 13px;
+        line-height: 1.6;
+        margin-bottom: 14px;
+      }
+
+      .meta strong,
+      .summary strong {
+        display: inline-block;
+        width: 96px;
+      }
+
+      .summary {
+        font-size: 14px;
+        line-height: 1.7;
+        margin-top: 10px;
+      }
+
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 11px 12px;
+        border: 1px solid #c5c5c5;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 16px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 11px 16px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .add {
+        background: #188038;
+        color: #ffffff;
+      }
+
+      .subtract {
+        background: #b3261e;
+        color: #ffffff;
+      }
+
+      .confirm {
+        background: #1a73e8;
+        color: #ffffff;
+      }
+
+      .secondary {
+        background: #f1f3f4;
+        color: #202124;
+      }
+
+      .error {
+        min-height: 18px;
+        color: #b3261e;
+        font-size: 12px;
+        margin-top: 12px;
+      }
+
+      .busy {
+        opacity: 0.7;
+        pointer-events: none;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .step-title {
+        font-size: 15px;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card" id="card">
+      <div class="title" id="title"></div>
+
+      <div id="entryStep">
+        <div class="meta" id="meta"></div>
+        <label for="quantityInput" id="quantityLabel"></label>
+        <input id="quantityInput" type="number" min="1" step="1" placeholder="Enter quantity">
+        <div class="actions">
+          <button class="add" onclick="prepareConfirmation('ADD')">Add Stock</button>
+          <button class="subtract" onclick="prepareConfirmation('SUBTRACT')">Subtract Stock</button>
+          <button class="secondary" onclick="cancelDialog()">Cancel</button>
+        </div>
+      </div>
+
+      <div id="confirmStep" class="hidden">
+        <div class="step-title">Review Update</div>
+        <div class="summary" id="summary"></div>
+        <div class="actions">
+          <button class="confirm" onclick="submitConfirmedAction()">Confirm</button>
+          <button class="secondary" onclick="backToEntry()">Back</button>
+          <button class="secondary" onclick="cancelDialog()">Cancel</button>
+        </div>
+      </div>
+
+      <div class="error" id="errorText"></div>
+    </div>
+
+    <script>
+      const dialogData = <?!= JSON.stringify(dialogData) ?>;
+      let pendingAction = '';
+      let pendingQuantity = 0;
+      let actionCompleted = false;
+      let cancelSent = false;
+      let heartbeatId = null;
+
+      function setBusy(isBusy) {
+        document.getElementById('card').classList.toggle('busy', isBusy);
+      }
+
+      function stopHeartbeat() {
+        if (heartbeatId) {
+          window.clearInterval(heartbeatId);
+          heartbeatId = null;
+        }
+      }
+
+      function startHeartbeat() {
+        stopHeartbeat();
+        google.script.run.APP_touchPendingActionDialog();
+        heartbeatId = window.setInterval(function() {
+          if (actionCompleted || cancelSent) {
+            stopHeartbeat();
+            return;
+          }
+          google.script.run.APP_touchPendingActionDialog();
+        }, Number(dialogData.heartbeatMs || 5000));
+      }
+
+      function showError(message) {
+        document.getElementById('errorText').textContent = message || '';
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function displayValue(value) {
+        return value === null || value === undefined ? '' : String(value);
+      }
+
+      function buildMetaHtml() {
+        const lines = [];
+        if (dialogData.requestedBy) {
+          lines.push('<div><strong>Requested By</strong>' + escapeHtml(dialogData.requestedBy) + '</div>');
+        }
+        lines.push('<div><strong>Item</strong>' + escapeHtml(dialogData.itemName || '') + '</div>');
+        lines.push('<div><strong>Code</strong>' + escapeHtml(dialogData.code || 'NO CODE') + '</div>');
+        lines.push('<div><strong>Available</strong>' + escapeHtml(String(dialogData.availableQty || 0)) + '</div>');
+        lines.push('<div><strong>Price per Piece</strong>' + escapeHtml(displayValue(dialogData.pricePerPiece)) + '</div>');
+        if (dialogData.remarks) {
+          lines.push('<div><strong>Remarks</strong>' + escapeHtml(dialogData.remarks) + '</div>');
+        }
+        return lines.join('');
+      }
+
+      function buildSummaryHtml() {
+        return [
+          '<div><strong>Action</strong>' + escapeHtml(pendingAction) + '</div>',
+          '<div><strong>Quantity</strong>' + escapeHtml(String(pendingQuantity)) + '</div>',
+          '<div><strong>Item</strong>' + escapeHtml(dialogData.itemName || '') + '</div>',
+          '<div><strong>Code</strong>' + escapeHtml(dialogData.code || 'NO CODE') + '</div>',
+          '<div><strong>Available</strong>' + escapeHtml(String(dialogData.availableQty || 0)) + '</div>',
+          '<div><strong>Price per Piece</strong>' + escapeHtml(displayValue(dialogData.pricePerPiece)) + '</div>'
+        ].join('');
+      }
+
+      function prepareConfirmation(action) {
+        showError('');
+        const quantityValue = document.getElementById('quantityInput').value.trim();
+        const quantity = Number(quantityValue);
+        if (!isFinite(quantity) || quantity <= 0) {
+          showError('Quantity must be greater than zero.');
+          return;
+        }
+        pendingAction = action;
+        pendingQuantity = quantity;
+        document.getElementById('summary').innerHTML = buildSummaryHtml();
+        document.getElementById('entryStep').classList.add('hidden');
+        document.getElementById('confirmStep').classList.remove('hidden');
+      }
+
+      function backToEntry() {
+        showError('');
+        document.getElementById('confirmStep').classList.add('hidden');
+        document.getElementById('entryStep').classList.remove('hidden');
+        document.getElementById('quantityInput').focus();
+      }
+
+      function submitConfirmedAction() {
+        showError('');
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler(function(result) {
+            setBusy(false);
+            if (result && result.ok) {
+              actionCompleted = true;
+              stopHeartbeat();
+              google.script.host.close();
+              return;
+            }
+            showError((result && result.message) || 'Action failed.');
+          })
+          .withFailureHandler(function(error) {
+            setBusy(false);
+            showError((error && error.message) || 'Action failed.');
+          })
+          .APP_submitActionDialog(Object.assign({}, dialogData.submitPayload || {}, {
+            action: pendingAction,
+            quantity: pendingQuantity
+          }));
+      }
+
+      function sendCloseCleanup() {
+        if (actionCompleted || cancelSent) {
+          return;
+        }
+        cancelSent = true;
+        stopHeartbeat();
+        try {
+          google.script.run.APP_cancelActionDialog(dialogData.cancelPayload || {});
+        } catch (error) {
+          // Best-effort close cleanup only.
+        }
+      }
+
+      function cancelDialog() {
+        cancelSent = true;
+        stopHeartbeat();
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler(function() {
+            google.script.host.close();
+          })
+          .withFailureHandler(function() {
+            google.script.host.close();
+          })
+          .APP_cancelActionDialog(dialogData.cancelPayload || {});
+      }
+
+      document.getElementById('title').textContent = dialogData.title || 'Update Item';
+      document.getElementById('meta').innerHTML = buildMetaHtml();
+      document.getElementById('quantityLabel').textContent = dialogData.quantityLabel || 'Quantity';
+      document.getElementById('quantityInput').focus();
+      startHeartbeat();
+
+      window.addEventListener('pagehide', sendCloseCleanup);
+      window.addEventListener('beforeunload', sendCloseCleanup);
+      window.addEventListener('unload', sendCloseCleanup);
+    </script>
+  </body>
+</html>

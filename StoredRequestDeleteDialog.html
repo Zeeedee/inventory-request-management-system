@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #f8f9fa;
+        color: #202124;
+      }
+
+      .shell {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      input {
+        flex: 1;
+        padding: 10px 12px;
+        border: 1px solid #c5c5c5;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: #1a73e8;
+        color: #ffffff;
+      }
+
+      .danger {
+        background: #b3261e;
+        color: #ffffff;
+      }
+
+      .secondary {
+        background: #f1f3f4;
+        color: #202124;
+      }
+
+      .list {
+        border: 1px solid #d0d0d0;
+        border-radius: 12px;
+        background: #ffffff;
+        max-height: 420px;
+        overflow-y: auto;
+        padding: 12px;
+      }
+
+      .card {
+        border: 1px solid #e0e0e0;
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        background: #fafafa;
+      }
+
+      .card:last-child {
+        margin-bottom: 0;
+      }
+
+      .title {
+        font-size: 15px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .meta {
+        font-size: 12px;
+        color: #5f6368;
+        margin-bottom: 8px;
+        line-height: 1.6;
+      }
+
+      .items {
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        background: #ffffff;
+        max-height: 160px;
+        overflow-y: auto;
+        padding: 8px 10px;
+      }
+
+      .item-line {
+        font-size: 12px;
+        line-height: 1.6;
+        border-bottom: 1px solid #f1f3f4;
+        padding: 4px 0;
+        white-space: pre-wrap;
+      }
+
+      .item-line:last-child {
+        border-bottom: 0;
+      }
+
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 10px;
+      }
+
+      .empty {
+        font-size: 13px;
+        color: #5f6368;
+        padding: 12px 0;
+      }
+
+      .status {
+        min-height: 18px;
+        font-size: 12px;
+        color: #b3261e;
+      }
+
+      .success {
+        color: #188038;
+      }
+    </style>
+  </head>
+  <body>
+      <div class="shell">
+        <div class="toolbar">
+          <input id="searchInput" type="text" placeholder="Filter by requested by or item name">
+          <button class="primary" onclick="searchRecords()">Search</button>
+          <button class="secondary" onclick="resetSearch()">Show All</button>
+        </div>
+
+      <div class="status" id="statusText"></div>
+      <div class="list" id="list"></div>
+    </div>
+
+    <script>
+      const dialogData = <?!= JSON.stringify(dialogData) ?>;
+      let records = (dialogData.initialData && dialogData.initialData.records) || [];
+
+      function setStatus(message, isSuccess) {
+        const el = document.getElementById('statusText');
+        el.textContent = message || '';
+        el.className = 'status' + (isSuccess ? ' success' : '');
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function renderRecords() {
+        const container = document.getElementById('list');
+        if (!records.length) {
+          container.innerHTML = '<div class="empty">No stored requests found for the current search.</div>';
+          return;
+        }
+
+        container.innerHTML = records.map(function(record, index) {
+          const lines = (record.detailLines || []).map(function(line) {
+            return '<div class="item-line">' + escapeHtml(line) + '</div>';
+          }).join('');
+          return [
+            '<div class="card">',
+            '<div class="title">' + escapeHtml(record.requestedBy || 'Saved Request') + '</div>',
+            '<div class="meta">',
+            'Stored: ' + escapeHtml(record.storedAtDisplay || '') + '<br>',
+            'Stored By: ' + escapeHtml(record.storedBy || '') + '<br>',
+            'Items: ' + escapeHtml(String(record.itemCount || 0)) + '<br>',
+            'Preview: ' + escapeHtml(record.preview || ''),
+            '</div>',
+            '<div class="items">' + lines + '</div>',
+            '<div class="actions">',
+            '<button class="danger" onclick="deleteRecordByIndex(' + index + ')">Delete</button>',
+            '</div>',
+            '</div>'
+          ].join('');
+        }).join('');
+      }
+
+      function applySearchResult(result) {
+        if (!result || !result.ok) {
+          setStatus((result && result.message) || 'Search failed.', false);
+          return;
+        }
+        records = result.records || [];
+        setStatus('', false);
+        renderRecords();
+      }
+
+      function searchRecords() {
+        const query = document.getElementById('searchInput').value.trim();
+        setStatus('Loading...', false);
+        google.script.run
+          .withSuccessHandler(applySearchResult)
+          .withFailureHandler(function(error) {
+            setStatus((error && error.message) || 'Search failed.', false);
+          })
+          .REQ_searchStoredRequests(query);
+      }
+
+      function resetSearch() {
+        document.getElementById('searchInput').value = '';
+        searchRecords();
+      }
+
+      function deleteRecordByIndex(index) {
+        const record = records[index];
+        if (!record) {
+          setStatus('Stored request not found.', false);
+          return;
+        }
+        const confirmed = window.confirm('Delete this stored request for ' + (record.requestedBy || 'Saved Request') + '?');
+        if (!confirmed) {
+          return;
+        }
+        setStatus('Deleting...', false);
+        google.script.run
+          .withSuccessHandler(function(result) {
+            if (!result || !result.ok) {
+              setStatus((result && result.message) || 'Delete failed.', false);
+              return;
+            }
+            records = (result.data && result.data.records) || [];
+            setStatus(result.message || 'Stored request deleted.', true);
+            renderRecords();
+          })
+          .withFailureHandler(function(error) {
+            setStatus((error && error.message) || 'Delete failed.', false);
+          })
+          .REQ_deleteStoredRequestById(record.recordId);
+      }
+
+      document.getElementById('searchInput').addEventListener('keydown', function(event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          searchRecords();
+        }
+      });
+
+      renderRecords();
+    </script>
+  </body>
+</html>
